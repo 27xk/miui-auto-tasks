@@ -1,0 +1,24 @@
+[project]
+name = "miui-auto-tasks"
+version = "1.0.0"
+description = ""
+authors = []
+dependencies = [
+    "loguru>=0.7.2",
+    "httpx>=0.25.1",
+    "pycryptodome>=3.21.0",
+    "pyyaml>=6.0.1",
+    "tenacity>=8.2.3",
+    "tzdata>=2023.3",
+    "onepush>=1.3.0",
+    "qrcode>=7.4.2",
+    "requests-toolbelt>=1.0.0",
+    "jsonpath_ng>=1.7.0",
+    "pillow>=11.2.1"
+]
+requires-python = ">=3.11"
+license = {text = "MIT"}
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"

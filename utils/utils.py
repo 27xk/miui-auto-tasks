@@ -6,7 +6,6 @@ import string
 import time
 from io import BytesIO
 from typing import Type, Union
-from urllib.parse import parse_qsl, urlparse
 
 from Crypto.Cipher import AES, PKCS1_v1_5
 from Crypto.PublicKey import RSA
@@ -14,7 +13,7 @@ from Crypto.Util.Padding import pad
 from qrcode import QRCode, constants
 from tenacity import RetryError, Retrying, stop_after_attempt
 
-from .captcha import get_validate
+from .captcha_solver import solve_token as solve_captcha_token
 from .data_model import TokenResultHandler
 from .logger import log
 from .request import post
@@ -90,42 +89,14 @@ def is_incorrect_return(
     )
 
 
-def get_token_by_captcha(url: str) -> Union[str, bool]:
+def get_token_by_captcha(url: str, uid: str = "") -> Union[str, bool]:
     """通过人机验证码获取TOKEN"""
     try:
-        parsed_url = urlparse(url)
-        query_params = dict(parse_qsl(parsed_url.query))  # 解析URL参数
-        gt = query_params.get("c", "")
-        challenge = query_params.get("l", "")
-        geetest_data = get_validate(gt, challenge)
-        params = {
-            "k": "3dc42a135a8d45118034d1ab68213073",
-            "locale": "zh_CN",
-            "_t": round(time.time() * 1000),
-        }
-
-        data = {
-            "e": query_params.get("e"),  # 人机验证的e参数，来自URL
-            "challenge": geetest_data.challenge,
-            "seccode": f"{geetest_data.validate}|jordan",
-        }
-
-        response = post(
-            "https://verify.sec.xiaomi.com/captcha/v2/gt/dk/verify",
-            params=params,
-            headers=headers,
-            data=data,
-        )
-        log.debug(response.text)
-        result = response.json()
-        api_data = TokenResultHandler(result)
-        if api_data.success:
-            return api_data.token
-        elif not api_data.data.get("result"):
-            log.error("遇到人机验证码，无法获取TOKEN")
-            return False
+        token = solve_captcha_token(entry_url=url, uid=uid)
+        if token:
+            return token
         else:
-            log.error("遇到未知错误，无法获取TOKEN")
+            log.error("遇到人机验证码，无法获取TOKEN")
             return False
     except Exception:  # pylint: disable=broad-exception-caught
         log.exception("获取TOKEN异常")
@@ -228,7 +199,7 @@ def get_token(uid: str) -> str | bool:
                 elif api_data.need_verify:
                     log.error("遇到人机验证码, 尝试调用解决方案")
                     url = api_data.data.get("url", "")
-                    if token := get_token_by_captcha(url):
+                    if token := get_token_by_captcha(url, uid=uid):
                         return token
                     else:
                         raise ValueError("人机验证失败")

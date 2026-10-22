@@ -1,6 +1,8 @@
 jsonpath_ng==1.7.0
 loguru==0.7.3
 onepush==1.5.0
+numpy>=1.26
+opencv-python-headless>=4.10.0.84
 pycryptodome==3.23.0
 PyYAML==6.0.2
 qrcode==8.2

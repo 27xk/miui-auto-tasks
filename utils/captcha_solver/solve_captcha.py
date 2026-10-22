@@ -37,8 +37,10 @@ ROUNDS = 10  # 完整获取-验证轮数。
 URL_ATTEMPTS = 3  # 每轮获取验证码 URL 的重试次数。
 SOLVE_ATTEMPTS = 5  # 每轮完整验证失败后的重试次数。
 TIMEOUT = 90  # 网络和助手等待超时秒数。
-PARAM_PATH = Path("yzm.param")  # yzm 模型结构文件。
-BIN_PATH = Path("yzm.bin")  # yzm 模型权重文件。
+BASE_DIR = Path(__file__).resolve().parent
+ASSET_DIR = BASE_DIR / "assets"
+PARAM_PATH = ASSET_DIR / "yzm.param"  # yzm 模型结构文件。
+BIN_PATH = ASSET_DIR / "yzm.bin"  # yzm 模型权重文件。
 MODEL_SIZE = 640  # 模型输入尺寸。
 CONF_THRESHOLD = 0.25  # 检测置信度阈值。
 IOU_THRESHOLD = 0.45  # NMS IoU 阈值。
@@ -1561,32 +1563,36 @@ def verify_xiaomi(  # 提交 GeeTest validate 完成小米二次验证。
         return response.json()
 
 
-def solve_once(uid: str = DEFAULT_UID, scene: str = DEFAULT_SCENE, url_attempts: int = URL_ATTEMPTS, timeout: int = TIMEOUT, param_path: Path | str = PARAM_PATH, bin_path: Path | str = BIN_PATH, size: int = MODEL_SIZE, conf: float = CONF_THRESHOLD, iou: float = IOU_THRESHOLD, split_y: float = SPLIT_Y, prompt_conf: float = PROMPT_CONF) -> dict[str, Any]:  # 执行一次获取、识别、点击、验证全流程。
+def solve_entry_url(
+    entry_url: str,
+    event_id: str = "",
+    entry_result: dict[str, Any] | None = None,
+    timeout: int = TIMEOUT,
+    param_path: Path | str = PARAM_PATH,
+    bin_path: Path | str = BIN_PATH,
+    size: int = MODEL_SIZE,
+    conf: float = CONF_THRESHOLD,
+    iou: float = IOU_THRESHOLD,
+    split_y: float = SPLIT_Y,
+    prompt_conf: float = PROMPT_CONF,
+) -> dict[str, Any]:  # 使用已有 GeeTest 入口 URL 完成识别、点击、验证全流程。
     session = requests.Session()
-
-    # 1. 请求小米 /data，得到 GeeTest check URL。
-    event_id, entry_url, entry_result = fetch_captcha_url(
-        uid=uid,
-        scene=scene,
-        attempts=url_attempts,
-        timeout=timeout,
-    )
     params = query_params(entry_url)
     challenge = params["l"]
 
     with GeetestHelper(entry_url, timeout) as helper:
-        # 2. jsdom 跑 GeeTest SDK，只取图片链接，不打开浏览器页面。
+        # 1. jsdom 跑 GeeTest SDK，只取图片链接，不打开浏览器页面。
         image_event = helper.read_event({"image"}, timeout=timeout)
         image_url = image_event.get("image_url") or build_geetest_image_url(image_event["data"], challenge)
         image = download_image(session, image_url, timeout)
 
-        # 3. 本地 yzm/ncnn 识别提示区顺序，并回放点击坐标。
+        # 2. 本地 yzm/ncnn 识别提示区顺序，并回放点击坐标。
         detections = run_model(image, param_path=param_path, bin_path=bin_path, size=size, conf=conf, iou=iou)
         targets = ordered_click_targets(detections, split_y=split_y, prompt_conf=prompt_conf)
         helper.send({"cmd": "clicks", "points": [{"x": item["x"], "y": item["y"]} for item in targets]})
         geetest_event = helper.read_event({"geetest_success"}, timeout=timeout)
 
-    # 4. 使用 GeeTest validate 完成小米二次校验，拿最终 token。
+    # 3. 使用 GeeTest validate 完成小米二次校验，拿最终 token。
     xiaomi_result = verify_xiaomi(
         session=session,
         entry_url=entry_url,
@@ -1604,7 +1610,7 @@ def solve_once(uid: str = DEFAULT_UID, scene: str = DEFAULT_SCENE, url_attempts:
     return {
         "event_id": event_id,
         "entry_url": entry_url,
-        "entry_result": entry_result,
+        "entry_result": entry_result or {},
         "challenge": challenge,
         "image_url": image_url,
         "detections": detections,
@@ -1613,6 +1619,54 @@ def solve_once(uid: str = DEFAULT_UID, scene: str = DEFAULT_SCENE, url_attempts:
         "xiaomi": xiaomi_result,
         "token": token,
     }
+
+
+def solve_once(
+    uid: str = DEFAULT_UID,
+    scene: str = DEFAULT_SCENE,
+    url_attempts: int = URL_ATTEMPTS,
+    timeout: int = TIMEOUT,
+    param_path: Path | str = PARAM_PATH,
+    bin_path: Path | str = BIN_PATH,
+    size: int = MODEL_SIZE,
+    conf: float = CONF_THRESHOLD,
+    iou: float = IOU_THRESHOLD,
+    split_y: float = SPLIT_Y,
+    prompt_conf: float = PROMPT_CONF,
+) -> dict[str, Any]:  # 执行一次获取、识别、点击、验证全流程。
+    event_id, entry_url, entry_result = fetch_captcha_url(
+        uid=uid,
+        scene=scene,
+        attempts=url_attempts,
+        timeout=timeout,
+    )
+    return solve_entry_url(
+        entry_url=entry_url,
+        event_id=event_id,
+        entry_result=entry_result,
+        timeout=timeout,
+        param_path=param_path,
+        bin_path=bin_path,
+        size=size,
+        conf=conf,
+        iou=iou,
+        split_y=split_y,
+        prompt_conf=prompt_conf,
+    )
+
+
+def solve_token(
+    entry_url: str | None = None,
+    uid: str = DEFAULT_UID,
+    scene: str = DEFAULT_SCENE,
+    url_attempts: int = URL_ATTEMPTS,
+    **kwargs: Any,
+) -> str:  # 返回签到需要的最终 token。
+    if entry_url:
+        result = solve_entry_url(entry_url=entry_url, **kwargs)
+    else:
+        result = solve_once(uid=uid, scene=scene, url_attempts=url_attempts, **kwargs)
+    return str(result["token"])
 
 
 def format_compact_result(result: dict[str, Any]) -> str:  # 格式化最终三行精简日志。
